@@ -153,3 +153,6 @@ Thumbs.db
 data/
 logs/
 *.log
+
+# Configuration files with sensitive data
+config.py

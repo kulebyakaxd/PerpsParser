@@ -5,6 +5,7 @@ import sqlite3
 import json
 from datetime import datetime
 from typing import List, Dict, Any, Optional
+import math
 
 
 class DatabaseManager:
@@ -48,38 +49,94 @@ class DatabaseManager:
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_symbol_exchange ON trading_pairs(symbol, exchange)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_timestamp ON trading_pairs(timestamp)')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_price_diff ON price_comparisons(price_difference)')
+
+            # Уникальный индекс на текущий снэпшот
+            try:
+                cursor.execute('CREATE UNIQUE INDEX IF NOT EXISTS ux_trading_pairs_latest ON trading_pairs(symbol, exchange)')
+            except sqlite3.IntegrityError:
+                pass
+
+            # Дедупликация price_comparisons и уникальный индекс
+            cursor.execute('''
+                DELETE FROM price_comparisons
+                WHERE rowid NOT IN (
+                    SELECT MIN(rowid)
+                    FROM price_comparisons
+                    GROUP BY symbol, exchange1, exchange2
+                )
+            ''')
+            try:
+                cursor.execute('CREATE UNIQUE INDEX IF NOT EXISTS ux_price_comp ON price_comparisons(symbol, exchange1, exchange2)')
+            except sqlite3.IntegrityError:
+                pass
             
+            conn.commit()
+    
+    def maintenance_snapshot(self, valid_exchanges: Optional[List[str]] = None):
+        """Очищает невалидные биржи, записи с price<=0 и оставляет только последние записи по (symbol, exchange)."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            if valid_exchanges:
+                placeholders = ','.join('?' for _ in valid_exchanges)
+                cursor.execute(f"DELETE FROM trading_pairs WHERE exchange NOT IN ({placeholders})", valid_exchanges)
+            # Удаляем нулевые/некорректные цены
+            cursor.execute('DELETE FROM trading_pairs WHERE price IS NULL OR price<=0 OR NOT (price<1000000000000.0)')
+            # Удаляем все записи, которые не являются последними по времени для своей пары
+            cursor.execute('''
+                DELETE FROM trading_pairs AS tp
+                WHERE EXISTS (
+                    SELECT 1 FROM trading_pairs t2
+                    WHERE t2.symbol = tp.symbol
+                      AND t2.exchange = tp.exchange
+                      AND t2.timestamp > tp.timestamp
+                )
+            ''')
+            conn.commit()
+
+    def sync_exchange_snapshot(self, exchange: str, valid_symbols: List[str]):
+        """Удаляет из trading_pairs все записи указанной биржи, символы которых не присутствуют в текущем списке."""
+        if not valid_symbols:
+            return
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            placeholders = ','.join('?' for _ in valid_symbols)
+            cursor.execute(f"DELETE FROM trading_pairs WHERE exchange = ? AND symbol NOT IN ({placeholders})", [exchange, *valid_symbols])
+            # Заодно почистим нулевые цены на этой бирже
+            cursor.execute("DELETE FROM trading_pairs WHERE exchange = ? AND (price IS NULL OR price<=0)", (exchange,))
             conn.commit()
     
     def save_trading_pairs(self, exchange: str, pairs: List[Dict[str, Any]]) -> int:
         """
-        Сохраняет торговые пары в базу данных
-        
-        Args:
-            exchange: Название биржи (hyperliquid, lighter, pacifica)
-            pairs: Список пар в формате [{"symbol": str, "price": float}]
-        
-        Returns:
-            Количество сохраненных записей
+        Сохраняет торговые пары в базу данных, поддерживая один актуальный снэпшот на (symbol, exchange)
         """
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             
             saved_count = 0
+            now_ts = datetime.now()
             for pair in pairs:
                 try:
+                    symbol = str(pair['symbol']).strip().upper()
+                    price_val = float(pair['price'])
+                    if not symbol or not math.isfinite(price_val) or price_val <= 0:
+                        continue
                     cursor.execute('''
-                        INSERT OR REPLACE INTO trading_pairs (symbol, exchange, price, timestamp)
+                        INSERT INTO trading_pairs (symbol, exchange, price, timestamp)
                         VALUES (?, ?, ?, ?)
+                        ON CONFLICT(symbol, exchange) DO UPDATE SET
+                            price=excluded.price,
+                            timestamp=excluded.timestamp
                     ''', (
-                        pair['symbol'],
+                        symbol,
                         exchange,
-                        pair['price'],
-                        datetime.now()
+                        price_val,
+                        now_ts
                     ))
                     saved_count += 1
+                except (ValueError, TypeError):
+                    continue
                 except sqlite3.Error as e:
-                    print(f"Ошибка при сохранении пары {pair['symbol']}: {e}")
+                    print(f"Ошибка при сохранении пары {pair.get('symbol')}: {e}")
                     continue
             
             conn.commit()
@@ -87,13 +144,7 @@ class DatabaseManager:
     
     def get_latest_prices(self, exchange: Optional[str] = None) -> List[Dict[str, Any]]:
         """
-        Получает последние цены для всех или конкретной биржи
-        
-        Args:
-            exchange: Название биржи (опционально)
-        
-        Returns:
-            Список последних цен
+        Получает текущие цены. Так как у нас один снэпшот на (symbol, exchange), запросы проще.
         """
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
@@ -103,24 +154,12 @@ class DatabaseManager:
                     SELECT symbol, exchange, price, timestamp
                     FROM trading_pairs
                     WHERE exchange = ?
-                    AND timestamp = (
-                        SELECT MAX(timestamp)
-                        FROM trading_pairs t2
-                        WHERE t2.symbol = trading_pairs.symbol
-                        AND t2.exchange = trading_pairs.exchange
-                    )
                     ORDER BY symbol
                 ''', (exchange,))
             else:
                 cursor.execute('''
                     SELECT symbol, exchange, price, timestamp
                     FROM trading_pairs
-                    WHERE timestamp = (
-                        SELECT MAX(timestamp)
-                        FROM trading_pairs t2
-                        WHERE t2.symbol = trading_pairs.symbol
-                        AND t2.exchange = trading_pairs.exchange
-                    )
                     ORDER BY exchange, symbol
                 ''')
             
@@ -134,24 +173,20 @@ class DatabaseManager:
                 })
             
             return results
-    
+
     def calculate_price_differences(self) -> List[Dict[str, Any]]:
         """
         Вычисляет разности цен между биржами для одинаковых символов
-        
-        Returns:
-            Список сравнений цен
+        Возвращаемый и записанный в БД набор — актуальный снимок. Старые записи очищаются.
         """
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
+
+            # Полностью очищаем предыдущие сравнения, чтобы в таблице был только актуальный снимок
+            cursor.execute('DELETE FROM price_comparisons')
             
-            # Получаем последние цены для каждой биржи
+            # Так как trading_pairs теперь хранит один снэпшот на (symbol, exchange), джоин простой
             cursor.execute('''
-                WITH latest_prices AS (
-                    SELECT symbol, exchange, price, timestamp,
-                           ROW_NUMBER() OVER (PARTITION BY symbol, exchange ORDER BY timestamp DESC) as rn
-                    FROM trading_pairs
-                )
                 SELECT 
                     p1.symbol,
                     p1.exchange as exchange1,
@@ -160,9 +195,8 @@ class DatabaseManager:
                     p2.price as price2,
                     ABS(p1.price - p2.price) as price_difference,
                     ABS(p1.price - p2.price) / ((p1.price + p2.price) / 2) * 100 as percentage_difference
-                FROM latest_prices p1
-                JOIN latest_prices p2 ON p1.symbol = p2.symbol AND p1.exchange < p2.exchange
-                WHERE p1.rn = 1 AND p2.rn = 1
+                FROM trading_pairs p1
+                JOIN trading_pairs p2 ON p1.symbol = p2.symbol AND p1.exchange < p2.exchange
                 ORDER BY price_difference DESC
             ''')
             
@@ -179,11 +213,16 @@ class DatabaseManager:
                 }
                 results.append(comparison)
                 
-                # Сохраняем сравнение в базу
                 cursor.execute('''
                     INSERT INTO price_comparisons 
                     (symbol, exchange1, price1, exchange2, price2, price_difference, percentage_difference)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(symbol, exchange1, exchange2) DO UPDATE SET
+                        price1=excluded.price1,
+                        price2=excluded.price2,
+                        price_difference=excluded.price_difference,
+                        percentage_difference=excluded.percentage_difference,
+                        timestamp=CURRENT_TIMESTAMP
                 ''', (
                     comparison['symbol'],
                     comparison['exchange1'],
@@ -196,16 +235,10 @@ class DatabaseManager:
             
             conn.commit()
             return results
-    
+
     def get_top_differences(self, limit: int = 5) -> List[Dict[str, Any]]:
         """
         Получает топ различий в ценах
-        
-        Args:
-            limit: Количество записей для возврата
-        
-        Returns:
-            Список топ различий
         """
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
@@ -236,23 +269,13 @@ class DatabaseManager:
     def get_exchange_stats(self) -> Dict[str, Any]:
         """
         Получает статистику по биржам
-        
-        Returns:
-            Словарь со статистикой
         """
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             
-            # Количество пар по биржам
             cursor.execute('''
                 SELECT exchange, COUNT(DISTINCT symbol) as pair_count
                 FROM trading_pairs
-                WHERE timestamp = (
-                    SELECT MAX(timestamp)
-                    FROM trading_pairs t2
-                    WHERE t2.symbol = trading_pairs.symbol
-                    AND t2.exchange = trading_pairs.exchange
-                )
                 GROUP BY exchange
             ''')
             
@@ -267,9 +290,6 @@ class DatabaseManager:
     def clear_old_data(self, days: int = 7):
         """
         Удаляет старые данные
-        
-        Args:
-            days: Количество дней для хранения данных
         """
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
@@ -289,27 +309,9 @@ class DatabaseManager:
 
 
 def main():
-    """Тестирование базы данных"""
     db = DatabaseManager()
-    
-    # Тестовые данные
-    test_pairs = [
-        {"symbol": "BTC", "price": 50000.0},
-        {"symbol": "ETH", "price": 3000.0}
-    ]
-    
-    # Сохраняем тестовые данные
-    saved = db.save_trading_pairs("test_exchange", test_pairs)
-    print(f"Сохранено {saved} пар")
-    
-    # Получаем данные
-    latest = db.get_latest_prices()
-    print(f"Получено {len(latest)} записей")
-    
-    # Статистика
-    stats = db.get_exchange_stats()
-    print(f"Статистика: {stats}")
-
+    db.maintenance_snapshot(valid_exchanges=["hyperliquid", "lighter", "pacifica"])  # cleanup
+    print('Объём trading_pairs:', len(db.get_latest_prices()))
 
 if __name__ == "__main__":
     main()

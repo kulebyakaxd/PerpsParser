@@ -15,3 +15,4 @@ __all__ = [
     'show_exchange_stats',
     'show_common_symbols'
 ]
+

@@ -2,20 +2,29 @@
 Основной файл для запуска парсера торговых пар
 """
 import asyncio
-from parsers import HyperliquidParser, LighterParser
+from parsers import HyperliquidParser, LighterParser, PacificaSDKParser
+from database import DatabaseManager
+
+# Загрузка переменных окружения из .env (если есть)
+try:
+    from dotenv import load_dotenv  # type: ignore
+    load_dotenv()
+except Exception:
+    pass
 
 
 async def main():
     """Основная функция для получения данных с различных бирж"""
     print("=== Парсер торговых пар ===")
-    print("Получает данные с Hyperliquid и Lighter")
+    print("Получает данные с Hyperliquid, Lighter и Pacifica")
     
     all_pairs = []
     
     # Парсеры
     parsers = [
         ("Hyperliquid", HyperliquidParser()),
-        ("Lighter", LighterParser())
+        ("Lighter", LighterParser()),
+        ("Pacifica (SDK)", PacificaSDKParser()),
     ]
     
     try:
@@ -40,7 +49,13 @@ async def main():
                 print(f"❌ Ошибка при получении данных с {name}: {e}")
             
             finally:
-                await parser.close()
+                close = getattr(parser, 'close', None)
+                if close and asyncio.iscoroutinefunction(close):
+                    await close()
+        
+        # Обслуживание БД: оставляем один актуальный снэпшот на (symbol, exchange)
+        db = DatabaseManager()
+        db.maintenance_snapshot(valid_exchanges=["hyperliquid", "lighter", "pacifica"])
         
         # Общая статистика
         if all_pairs:

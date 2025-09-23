@@ -42,23 +42,34 @@ class LighterParser:
             
             # Извлекаем пары и цены из данных
             pairs = []
+            valid_symbols: List[str] = []
             for market in order_book_data:
                 try:
-                    symbol = market.get('symbol', '')
+                    symbol = str(market.get('symbol', '')).strip().upper()
                     price = market.get('last_trade_price')
-                    
-                    if symbol and price is not None:
-                        pairs.append({
-                            "symbol": symbol,
-                            "price": float(price)
-                        })
-                except (ValueError, TypeError) as e:
-                    print(f"Ошибка при обработке рынка {market.get('symbol', 'unknown')}: {e}")
+                    if not symbol:
+                        continue
+                    if price is None:
+                        continue
+                    price = float(price)
+                    if price <= 0:
+                        continue
+                    pairs.append({
+                        "symbol": symbol,
+                        "price": price
+                    })
+                    valid_symbols.append(symbol)
+                except (ValueError, TypeError):
                     continue
             
             # Сохраняем в базу данных
             if pairs:
                 saved_count = self.db_manager.save_trading_pairs("lighter", pairs)
+                # Синхронизируем снапшот: удаляем отсутствующие символы и некорректные
+                try:
+                    self.db_manager.sync_exchange_snapshot("lighter", valid_symbols)
+                except Exception:
+                    pass
                 print(f"💾 Сохранено {saved_count} пар Lighter в базу данных")
             
             return pairs
@@ -102,19 +113,34 @@ class LighterParser:
             
             # Извлекаем пары и цены из данных
             pairs = []
+            valid_symbols: List[str] = []
             for market in order_book_data:
                 try:
-                    symbol = market.get('symbol', '')
+                    symbol = str(market.get('symbol', '')).strip().upper()
                     price = market.get('last_trade_price')
-                    
-                    if symbol and price is not None:
-                        pairs.append({
-                            "symbol": symbol,
-                            "price": float(price)
-                        })
-                except (ValueError, TypeError) as e:
-                    print(f"Ошибка при обработке рынка {market.get('symbol', 'unknown')}: {e}")
+                    if not symbol:
+                        continue
+                    if price is None:
+                        continue
+                    price = float(price)
+                    if price <= 0:
+                        continue
+                    pairs.append({
+                        "symbol": symbol,
+                        "price": price
+                    })
+                    valid_symbols.append(symbol)
+                except (ValueError, TypeError):
                     continue
+            
+            # Сохраняем в базу данных
+            if pairs:
+                saved_count = self.db_manager.save_trading_pairs("lighter", pairs)
+                try:
+                    self.db_manager.sync_exchange_snapshot("lighter", valid_symbols)
+                except Exception:
+                    pass
+                print(f"💾 Сохранено {saved_count} пар Lighter в базу данных")
             
             return pairs
             

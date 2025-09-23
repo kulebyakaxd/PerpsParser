@@ -1,2 +1,4 @@
 requests
 aiohttp
+pacifica-sdk
+python-dotenv
