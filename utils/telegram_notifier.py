@@ -36,6 +36,9 @@ class TelegramNotifier:
         self.base_url = f"https://api.telegram.org/bot{self.token}" if self.token else None
 
     def is_configured(self) -> bool:
+        # Не отправляем сообщения в каналы (chat_id начинается с -100)
+        if self.chat_id and str(self.chat_id).startswith("-100"):
+            return False
         return bool(self.base_url and self.chat_id)
 
     async def send(self, text: str) -> bool:

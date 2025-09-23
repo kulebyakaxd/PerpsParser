@@ -12,15 +12,30 @@ import asyncio
 from typing import List
 import contextlib
 
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 from telegram.constants import ParseMode
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, MessageHandler, filters
 
 from database import DatabaseManager
 from utils.scheduler import periodic_refresh
 
 
 EXCHANGES_ALL = ["hyperliquid", "lighter", "pacifica", "aster", "extended"]
+
+
+def _format_top_spreads(items: list) -> str:
+    lines = ["📊 Top‑10 spreads"]
+    for i, diff in enumerate(items, 1):
+        pct = diff['percentage_difference']
+        symbol = diff['symbol']
+        ex1 = str(diff['exchange1']).capitalize()
+        ex2 = str(diff['exchange2']).capitalize()
+        price1 = diff['price1']
+        price2 = diff['price2']
+        lines.append(
+            f"{i}. {symbol} — Δ {pct:.2f}% | {ex1} ${price1:.4f} • {ex2} ${price2:.4f}"
+        )
+    return "\n".join(lines)
 
 
 def _get_bot_token() -> str:
@@ -56,6 +71,28 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     db = DatabaseManager()
     selected = db.get_user_exchanges(user_id)
     interval = db.get_user_interval(user_id)
+    # Welcome and quick how-to (EN) + author mention
+    if update.message:
+        await update.message.reply_text(
+            "<b>Soft made by</b> <a href=\"https://t.me/xartmoves\">@xartmoves</a>\n\n"
+            "👋 <b>Welcome!</b>\n\n"
+            "This bot aggregates prices from Hyperliquid, Lighter, Pacifica, Aster and Extended\n"
+            "and shows the Top‑10 spreads (%).\n\n"
+            "How to use:\n"
+            "1) Open /start and select at least 2 exchanges;\n"
+            "2) Choose update interval (1–60 minutes);\n"
+            "3) Tap \"Show Top-10\" or use /top.\n\n"
+            "Commands:\n"
+            "• /start — configure exchanges and interval\n"
+            "• /top — show Top‑10 spreads\n"
+            "• /settings — open settings\n"
+            "• /help — help",
+            parse_mode=ParseMode.HTML,
+            reply_markup=ReplyKeyboardMarkup(
+                [[KeyboardButton("Top"), KeyboardButton("Settings")]],
+                resize_keyboard=True,
+            ),
+        )
     await update.message.reply_text(
         f"Select at least 2 exchanges and interval (current: {interval} min):",
         reply_markup=_keyboard(selected),
@@ -63,12 +100,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text(
-        "Commands:\n"\
-        "/start - Configure exchanges\n"\
-        "/top - Show Top-10 spreads for your selection\n"\
-        "/settings - Configure exchanges and update interval"
-    )
+    if update.message:
+        await update.message.reply_text(
+            "<b>Soft made by</b> <a href=\"https://t.me/xartmoves\">@xartmoves</a>\n\n"
+            "ℹ️ <b>Help</b>\n\n"
+            "This bot shows the Top‑10 spreads (%) among your selected exchanges.\n\n"
+            "Commands:\n"
+            "• /start — configure exchanges and interval\n"
+            "• /top — show Top‑10 spreads\n"
+            "• /settings — open settings\n\n"
+            "Tips: select at least 2 exchanges and an interval between 1–60 minutes.",
+            parse_mode=ParseMode.HTML,
+        )
 
 
 async def top_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -84,14 +127,7 @@ async def top_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not items:
         await update.message.reply_text("No data found. Please wait for the next refresh.")
         return
-    text_lines = ["Top-10 spreads (%):"]
-    for i, diff in enumerate(items, 1):
-        pct = diff['percentage_difference']
-        text_lines.append(
-            f"{i}. {diff['symbol']} | {diff['exchange1']}: ${diff['price1']:.6f} | "
-            f"{diff['exchange2']}: ${diff['price2']:.6f} | Δ%: {pct:.2f}"
-        )
-    await update.message.reply_text("\n".join(text_lines))
+    await update.message.reply_text(_format_top_spreads(items))
 
 
 async def settings_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -147,15 +183,8 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         if not items:
             await query.answer("No data yet. Please wait.", show_alert=True)
             return
-        text_lines = ["Top-10 spreads (%):"]
-        for i, diff in enumerate(items, 1):
-            pct = diff['percentage_difference']
-            text_lines.append(
-                f"{i}. {diff['symbol']} | {diff['exchange1']}: ${diff['price1']:.6f} | "
-                f"{diff['exchange2']}: ${diff['price2']:.6f} | Δ%: {pct:.2f}"
-            )
         await query.answer()
-        await query.message.reply_text("\n".join(text_lines))
+        await query.message.reply_text(_format_top_spreads(items))
 
 
 async def run_bot() -> None:
@@ -168,6 +197,9 @@ async def run_bot() -> None:
     application.add_handler(CommandHandler("top", top_cmd))
     application.add_handler(CommandHandler("settings", settings_cmd))
     application.add_handler(CallbackQueryHandler(on_callback))
+    # Reply keyboard buttons without slash
+    application.add_handler(MessageHandler(filters.Regex(r"(?i)^top$"), top_cmd))
+    application.add_handler(MessageHandler(filters.Regex(r"(?i)^settings$"), settings_cmd))
 
     # Per-user scheduled push via JobQueue
     async def push_top(context: ContextTypes.DEFAULT_TYPE):
@@ -179,15 +211,8 @@ async def run_bot() -> None:
         items = db.get_top_differences_filtered(exchanges, limit=10)
         if not items:
             return
-        text_lines = ["Top-10 spreads (%):"]
-        for i, diff in enumerate(items, 1):
-            pct = diff['percentage_difference']
-            text_lines.append(
-                f"{i}. {diff['symbol']} | {diff['exchange1']}: ${diff['price1']:.6f} | "
-                f"{diff['exchange2']}: ${diff['price2']:.6f} | Δ%: {pct:.2f}"
-            )
         try:
-            await context.bot.send_message(chat_id=user_id, text="\n".join(text_lines))
+            await context.bot.send_message(chat_id=user_id, text=_format_top_spreads(items))
         except Exception:
             pass
 
