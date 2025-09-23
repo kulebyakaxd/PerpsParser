@@ -8,6 +8,7 @@ import requests
 from typing import List, Dict, Any
 from database import DatabaseManager
 from utils.telegram_notifier import get_notifier
+from utils.http_client import create_aiohttp_session
 
 
 class HyperliquidParser:
@@ -19,7 +20,7 @@ class HyperliquidParser:
     async def initialize(self):
         """Инициализация HTTP сессии"""
         if self.session is None:
-            self.session = aiohttp.ClientSession()
+            self.session = create_aiohttp_session()
     
     async def close(self):
         """Закрытие HTTP сессии"""

@@ -14,15 +14,8 @@ except Exception:
 from parsers import HyperliquidParser, LighterParser, PacificaSDKParser, AsterParser, ExtendedParser
 from utils.telegram_notifier import get_notifier
 from database import DatabaseManager
-from utils.scheduler import periodic_refresh
 from utils.telegram_bot import run_bot
-
-
-async def run_services():
-    await asyncio.gather(
-        periodic_refresh(300),
-        run_bot(),
-    )
+from utils.single_instance import acquire_pid_lock
 
 
 async def main():
@@ -86,5 +79,11 @@ async def main():
 
 
 if __name__ == "__main__":
-    # One-file launch: start 5-minute updater and the Telegram bot together
-    asyncio.run(run_services())
+    # Ensure single instance
+    try:
+        acquire_pid_lock()
+    except RuntimeError as e:
+        print(str(e))
+        raise SystemExit(1)
+    # One-file launch: start Telegram bot (it runs the 5-minute refresh internally)
+    asyncio.run(run_bot())

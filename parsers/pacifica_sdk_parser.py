@@ -11,6 +11,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from database import DatabaseManager
 from utils.telegram_notifier import get_notifier
+from utils.http_client import create_aiohttp_session  # not directly used but aligns deps
 
 # Публичный ключ (опционально) можно задать через .env
 PACIFICA_PUBLIC_KEY = os.getenv('PACIFICA_PUBLIC_KEY')

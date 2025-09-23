@@ -10,12 +10,14 @@ Environment:
 import os
 import asyncio
 from typing import List
+import contextlib
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 
 from database import DatabaseManager
+from utils.scheduler import periodic_refresh
 
 
 EXCHANGES_ALL = ["hyperliquid", "lighter", "pacifica", "aster", "extended"]
@@ -210,11 +212,18 @@ async def run_bot() -> None:
     await application.initialize()
     await application.start()
     await application.updater.start_polling()
+
+    # Start global periodic refresh task within bot process to avoid second runner
+    loop = asyncio.get_running_loop()
+    refresh_task = loop.create_task(periodic_refresh(300))
     # Keep running until cancelled
     try:
         while True:
             await asyncio.sleep(60)
     finally:
+        refresh_task.cancel()
+        with contextlib.suppress(Exception):
+            await refresh_task
         await application.updater.stop()
         await application.stop()
         await application.shutdown()

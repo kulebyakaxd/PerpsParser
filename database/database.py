@@ -83,6 +83,16 @@ class DatabaseManager:
             ''')
             cursor.execute('CREATE INDEX IF NOT EXISTS idx_user_prefs_updated ON user_prefs(updated_at)')
             conn.commit()
+
+            # Миграция: добавить interval_minutes, если таблица уже существовала без него
+            try:
+                cursor.execute("PRAGMA table_info(user_prefs)")
+                cols = [row[1] for row in cursor.fetchall()]  # row[1] = name
+                if 'interval_minutes' not in cols:
+                    cursor.execute("ALTER TABLE user_prefs ADD COLUMN interval_minutes INTEGER NOT NULL DEFAULT 5")
+                    conn.commit()
+            except sqlite3.Error:
+                pass
     
     def maintenance_snapshot(self, valid_exchanges: Optional[List[str]] = None):
         """Очищает невалидные биржи, записи с price<=0 и оставляет только последние записи по (symbol, exchange)."""

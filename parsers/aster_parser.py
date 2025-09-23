@@ -19,6 +19,7 @@ from typing import List, Dict, Any, Optional
 
 from database import DatabaseManager
 from utils.telegram_notifier import get_notifier
+from utils.http_client import create_aiohttp_session
 
 
 ASTER_API_KEY = os.getenv("ASTER_API_KEY")
@@ -43,7 +44,7 @@ class AsterParser:
 
     async def initialize(self):
         if self.session is None:
-            self.session = aiohttp.ClientSession()
+            self.session = create_aiohttp_session()
 
     async def close(self):
         if self.session:
