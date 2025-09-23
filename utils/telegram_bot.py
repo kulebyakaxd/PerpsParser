@@ -127,6 +127,36 @@ def _keyboard(selected: List[str]) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(rows)
 
 
+async def push_top(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """JobQueue task: send Top to a specific user."""
+    user_id = context.job.chat_id
+    db = DatabaseManager()
+    exchanges = db.get_user_exchanges(user_id)
+    if len(exchanges) < 2:
+        return
+    limit_value = db.get_user_top_limit(user_id)
+    items = db.get_top_differences_filtered(exchanges, limit=limit_value)
+    if not items:
+        return
+    try:
+        await context.bot.send_message(chat_id=user_id, text=_format_top_spreads(items) + "\n\nmade by @xartmoves", parse_mode=ParseMode.HTML)
+    except Exception:
+        pass
+
+
+async def schedule_for_user(application: Application, user_id: int) -> None:
+    """Create/update JobQueue schedule for a user based on DB interval."""
+    db = DatabaseManager()
+    minutes = db.get_user_interval(user_id)
+    jq = getattr(application, 'job_queue', None)
+    if jq is None:
+        return
+    for job in jq.get_jobs_by_name(str(user_id)):
+        job.schedule_removal()
+    if minutes and minutes > 0:
+        jq.run_repeating(push_top, interval=minutes * 60, chat_id=user_id, name=str(user_id))
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id if update.effective_user else None
     if not user_id:
@@ -239,6 +269,11 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         except Exception:
             minutes = 5
         db.set_user_interval(user_id, minutes)
+        # Reschedule JobQueue immediately using module-level helper
+        try:
+            await schedule_for_user(context.application, user_id)
+        except Exception:
+            pass
         label = "Off" if minutes == 0 else f"{minutes} min"
         await query.answer(f"Interval set to {label}")
         return
@@ -278,44 +313,14 @@ async def run_bot() -> None:
     application.add_handler(MessageHandler(filters.Regex(r"(?i)^top$"), top_cmd))
     application.add_handler(MessageHandler(filters.Regex(r"(?i)^settings$"), settings_cmd))
 
-    # Per-user scheduled push via JobQueue
-    async def push_top(context: ContextTypes.DEFAULT_TYPE):
-        user_id = context.job.chat_id
-        db = DatabaseManager()
-        exchanges = db.get_user_exchanges(user_id)
-        if len(exchanges) < 2:
-            return
-        limit_value = db.get_user_top_limit(user_id)
-        items = db.get_top_differences_filtered(exchanges, limit=limit_value)
-        if not items:
-            return
-        try:
-            await context.bot.send_message(chat_id=user_id, text=_format_top_spreads(items) + "\n\nmade by @xartmoves", parse_mode=ParseMode.HTML)
-        except Exception:
-            pass
-
-    # Helpers to (re)schedule on /start and interval changes
-    async def schedule_for_user(user_id: int):
-        db = DatabaseManager()
-        minutes = db.get_user_interval(user_id)
-        # Guard: JobQueue may be None if extras not installed
-        jq = getattr(application, 'job_queue', None)
-        if jq is None:
-            return
-        # Remove previous jobs
-        for job in jq.get_jobs_by_name(str(user_id)):
-            job.schedule_removal()
-        if minutes and minutes > 0:
-            jq.run_repeating(push_top, interval=minutes * 60, chat_id=user_id, name=str(user_id))
-
     # Hook into /start and /settings to (re)schedule
     async def post_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if update.effective_user:
-            await schedule_for_user(update.effective_user.id)
+            await schedule_for_user(application, update.effective_user.id)
     application.add_handler(CommandHandler("start", post_start), group=1)
     async def post_settings(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if update.effective_user:
-            await schedule_for_user(update.effective_user.id)
+            await schedule_for_user(application, update.effective_user.id)
     application.add_handler(CommandHandler("settings", post_settings), group=1)
     await application.initialize()
     await application.start()
