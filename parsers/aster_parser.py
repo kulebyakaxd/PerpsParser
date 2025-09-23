@@ -18,6 +18,7 @@ import time
 from typing import List, Dict, Any, Optional
 
 from database import DatabaseManager
+from utils.telegram_notifier import get_notifier
 
 
 ASTER_API_KEY = os.getenv("ASTER_API_KEY")
@@ -115,13 +116,13 @@ class AsterParser:
                         self.db_manager.sync_exchange_snapshot("aster", valid_symbols)
                 except Exception:
                     pass
-                print(f"💾 Сохранено {saved} пар Aster в базу данных")
+                get_notifier().log(f"💾 Сохранено {saved} пар Aster в базу данных")
             else:
-                print("⚠️ Aster вернул пустой список рынков или цен")
+                get_notifier().log("⚠️ Aster вернул пустой список рынков или цен")
 
             return pairs
         except Exception as e:
-            print(f"❌ Ошибка Aster: {e}")
+            get_notifier().log(f"❌ Ошибка Aster: {e}")
             return []
 
     async def _fetch_markets(self) -> Any:
@@ -189,13 +190,13 @@ class AsterParser:
                         if resp2.status == 200:
                             return await resp2.json()
                         text = await resp2.text()
-                        print(f"Aster GET {url} -> {resp2.status}: {text}")
+                        get_notifier().log(f"Aster GET {url} -> {resp2.status}: {text}")
                         return None
                 text = await resp.text()
-                print(f"Aster GET {url} -> {resp.status}: {text}")
+                get_notifier().log(f"Aster GET {url} -> {resp.status}: {text}")
                 return None
         except Exception as e:
-            print(f"Ошибка запроса {url}: {e}")
+            get_notifier().log(f"Ошибка запроса {url}: {e}")
             return None
 
     def _build_headers(self, method: str, url: str, body: str = "") -> Dict[str, str]:
@@ -263,9 +264,9 @@ async def main():
     parser = AsterParser()
     try:
         pairs = await parser.get_pairs_with_prices()
-        print(f"Всего пар: {len(pairs)}")
+        get_notifier().log(f"Всего пар: {len(pairs)}")
         for i, p in enumerate(pairs[:10], 1):
-            print(f"{i:2d}. {p['symbol']:20s} - ${p['price']:>12.6f}")
+            get_notifier().log(f"{i:2d}. {p['symbol']:20s} - ${p['price']:>12.6f}")
     finally:
         await parser.close()
 

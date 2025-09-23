@@ -10,6 +10,7 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from database import DatabaseManager
+from utils.telegram_notifier import get_notifier
 
 # Публичный ключ (опционально) можно задать через .env
 PACIFICA_PUBLIC_KEY = os.getenv('PACIFICA_PUBLIC_KEY')
@@ -72,9 +73,9 @@ class PacificaSDKParser:
 
         if pairs:
             saved = self.db_manager.save_trading_pairs("pacifica", pairs)
-            print(f"💾 Сохранено {saved} пар Pacifica (SDK) в базу данных")
+            get_notifier().log(f"💾 Сохранено {saved} пар Pacifica (SDK) в базу данных")
         else:
-            print("⚠️ SDK вернул пустой список рынков или цен")
+            get_notifier().log("⚠️ SDK вернул пустой список рынков или цен")
         return pairs
 
     async def close(self):
@@ -86,9 +87,9 @@ async def main():
     parser = PacificaSDKParser()
     try:
         pairs = await parser.get_pairs_with_prices()
-        print(f"Всего пар: {len(pairs)}")
+        get_notifier().log(f"Всего пар: {len(pairs)}")
         for i, p in enumerate(pairs[:10], 1):
-            print(f"{i:2d}. {p['symbol']:20s} - ${p['price']:>12.6f}")
+            get_notifier().log(f"{i:2d}. {p['symbol']:20s} - ${p['price']:>12.6f}")
     finally:
         await parser.close()
 

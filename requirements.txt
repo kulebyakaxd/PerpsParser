@@ -2,3 +2,4 @@ requests
 aiohttp
 pacifica-sdk
 python-dotenv
+python-telegram-bot==21.4

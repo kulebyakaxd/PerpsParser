@@ -7,6 +7,7 @@ import aiohttp
 import requests
 from typing import List, Dict, Any
 from database import DatabaseManager
+from utils.telegram_notifier import get_notifier
 
 
 class HyperliquidParser:
@@ -47,30 +48,41 @@ class HyperliquidParser:
             
             # Объединяем данные
             pairs = []
+            valid_symbols: List[str] = []
             universe = meta_data.get('universe', [])
             
             for asset in universe:
                 symbol = asset.get('name', '')
                 if symbol and symbol in prices_data:
                     try:
+                        # Пропускаем проблемный символ LISTA на Hyperliquid
+                        if str(symbol).strip().upper() == 'LISTA':
+                            continue
                         price = float(prices_data[symbol])
                         pairs.append({
                             "symbol": symbol,
                             "price": price
                         })
+                        valid_symbols.append(str(symbol).strip().upper())
                     except (ValueError, TypeError) as e:
-                        print(f"Ошибка при обработке цены для {symbol}: {e}")
+                        get_notifier().log(f"Ошибка при обработке цены для {symbol}: {e}")
                         continue
             
             # Сохраняем в базу данных
             if pairs:
                 saved_count = self.db_manager.save_trading_pairs("hyperliquid", pairs)
-                print(f"💾 Сохранено {saved_count} пар Hyperliquid в базу данных")
+                # Удаляем из снапшота все символы этой биржи, которых нет в текущем списке
+                try:
+                    if valid_symbols:
+                        self.db_manager.sync_exchange_snapshot("hyperliquid", valid_symbols)
+                except Exception:
+                    pass
+                get_notifier().log(f"💾 Сохранено {saved_count} пар Hyperliquid в базу данных")
             
             return pairs
                 
         except Exception as e:
-            print(f"❌ Общая ошибка: {e}")
+            get_notifier().log(f"❌ Общая ошибка: {e}")
             return []
     
     async def _get_meta_info(self) -> Dict[str, Any]:
@@ -82,13 +94,13 @@ class HyperliquidParser:
             async with self.session.post(url, json=payload) as response:
                 if response.status == 200:
                     data = await response.json()
-                    print(f"✅ Получена метаинформация: {len(data.get('universe', []))} активов")
+                    get_notifier().log(f"✅ Получена метаинформация: {len(data.get('universe', []))} активов")
                     return data
                 else:
-                    print(f"❌ Ошибка {response.status} при получении метаинформации")
+                    get_notifier().log(f"❌ Ошибка {response.status} при получении метаинформации")
                     return {}
         except Exception as e:
-            print(f"❌ Ошибка при получении метаинформации: {e}")
+            get_notifier().log(f"❌ Ошибка при получении метаинформации: {e}")
             return {}
     
     async def _get_all_mids(self) -> Dict[str, Any]:
@@ -100,13 +112,13 @@ class HyperliquidParser:
             async with self.session.post(url, json=payload) as response:
                 if response.status == 200:
                     data = await response.json()
-                    print(f"✅ Получены цены для {len(data)} активов")
+                    get_notifier().log(f"✅ Получены цены для {len(data)} активов")
                     return data
                 else:
-                    print(f"❌ Ошибка {response.status} при получении цен")
+                    get_notifier().log(f"❌ Ошибка {response.status} при получении цен")
                     return {}
         except Exception as e:
-            print(f"❌ Ошибка при получении цен: {e}")
+            get_notifier().log(f"❌ Ошибка при получении цен: {e}")
             return {}
     
     def _extract_pairs_from_data(self, data: Any) -> List[Dict[str, Any]]:
@@ -145,11 +157,11 @@ class HyperliquidParser:
                                 "price": float(item['price'])
                             })
             
-            print(f"Извлечено {len(pairs)} пар из данных")
+            get_notifier().log(f"Извлечено {len(pairs)} пар из данных")
             return pairs
             
         except Exception as e:
-            print(f"Ошибка при извлечении пар: {e}")
+            get_notifier().log(f"Ошибка при извлечении пар: {e}")
             return []
     
     def get_pairs_with_prices_sync(self) -> List[Dict[str, Any]]:
@@ -187,7 +199,7 @@ class HyperliquidParser:
             return pairs
             
         except Exception as e:
-            print(f"❌ Общая ошибка: {e}")
+            get_notifier().log(f"❌ Общая ошибка: {e}")
             return []
     
     def _get_meta_info_sync(self) -> Dict[str, Any]:
@@ -199,13 +211,13 @@ class HyperliquidParser:
             response = requests.post(url, json=payload, timeout=10)
             if response.status_code == 200:
                 data = response.json()
-                print(f"✅ Получена метаинформация: {len(data.get('universe', []))} активов")
+                get_notifier().log(f"✅ Получена метаинформация: {len(data.get('universe', []))} активов")
                 return data
             else:
-                print(f"❌ Ошибка {response.status_code} при получении метаинформации")
+                get_notifier().log(f"❌ Ошибка {response.status_code} при получении метаинформации")
                 return {}
         except Exception as e:
-            print(f"❌ Ошибка при получении метаинформации: {e}")
+            get_notifier().log(f"❌ Ошибка при получении метаинформации: {e}")
             return {}
     
     def _get_all_mids_sync(self) -> Dict[str, Any]:
@@ -217,13 +229,13 @@ class HyperliquidParser:
             response = requests.post(url, json=payload, timeout=10)
             if response.status_code == 200:
                 data = response.json()
-                print(f"✅ Получены цены для {len(data)} активов")
+                get_notifier().log(f"✅ Получены цены для {len(data)} активов")
                 return data
             else:
-                print(f"❌ Ошибка {response.status_code} при получении цен")
+                get_notifier().log(f"❌ Ошибка {response.status_code} при получении цен")
                 return {}
         except Exception as e:
-            print(f"❌ Ошибка при получении цен: {e}")
+            get_notifier().log(f"❌ Ошибка при получении цен: {e}")
             return {}
 
 
@@ -232,15 +244,15 @@ async def main():
     parser = HyperliquidParser()
     
     try:
-        print("Получение данных с Hyperliquid...")
+        get_notifier().log("Получение данных с Hyperliquid...")
         pairs = await parser.get_pairs_with_prices()
         
         if pairs:
-            print(f"Найдено {len(pairs)} торговых пар:")
+            get_notifier().log(f"Найдено {len(pairs)} торговых пар:")
             for i, pair in enumerate(pairs[:10], 1):  # Показываем первые 10 пар
-                print(f"{i:2d}. {pair['symbol']:20s} - ${pair['price']:>12.6f}")
+                get_notifier().log(f"{i:2d}. {pair['symbol']:20s} - ${pair['price']:>12.6f}")
         else:
-            print("Не удалось получить данные")
+            get_notifier().log("Не удалось получить данные")
         
         return pairs
         

@@ -71,6 +71,18 @@ class DatabaseManager:
                 pass
             
             conn.commit()
+
+            # Таблица предпочтений пользователей бота: хранит выбранные биржи
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS user_prefs (
+                    user_id INTEGER PRIMARY KEY,
+                    exchanges TEXT NOT NULL DEFAULT '[]',
+                    interval_minutes INTEGER NOT NULL DEFAULT 5,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_user_prefs_updated ON user_prefs(updated_at)')
+            conn.commit()
     
     def maintenance_snapshot(self, valid_exchanges: Optional[List[str]] = None):
         """Очищает невалидные биржи, записи с price<=0 и оставляет только последние записи по (symbol, exchange)."""
@@ -265,6 +277,96 @@ class DatabaseManager:
                 })
             
             return results
+
+    def get_top_differences_filtered(self, exchanges: List[str], limit: int = 10) -> List[Dict[str, Any]]:
+        """
+        Получает топ различий в ценах, отфильтрованный по выбранным биржам.
+        Сортировка по процентной разнице по убыванию.
+        """
+        if not exchanges or len(exchanges) < 2:
+            return []
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            placeholders = ','.join('?' for _ in exchanges)
+            cursor.execute(f'''
+                SELECT symbol, exchange1, price1, exchange2, price2,
+                       price_difference, percentage_difference, timestamp
+                FROM price_comparisons
+                WHERE exchange1 IN ({placeholders})
+                  AND exchange2 IN ({placeholders})
+                ORDER BY percentage_difference DESC
+                LIMIT ?
+            ''', [*exchanges, *exchanges, limit])
+
+            results: List[Dict[str, Any]] = []
+            for row in cursor.fetchall():
+                results.append({
+                    'symbol': row[0],
+                    'exchange1': row[1],
+                    'price1': row[2],
+                    'exchange2': row[3],
+                    'price2': row[4],
+                    'price_difference': row[5],
+                    'percentage_difference': row[6],
+                    'timestamp': row[7]
+                })
+            return results
+
+    def get_user_exchanges(self, user_id: int) -> List[str]:
+        """Возвращает список бирж, выбранных пользователем."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT exchanges FROM user_prefs WHERE user_id = ?', (user_id,))
+            row = cursor.fetchone()
+            if not row or not row[0]:
+                return []
+            try:
+                return json.loads(row[0]) or []
+            except Exception:
+                return []
+
+    def set_user_exchanges(self, user_id: int, exchanges: List[str]) -> None:
+        """Сохраняет выбор бирж пользователя."""
+        clean = [str(e).strip().lower() for e in exchanges if str(e).strip()]
+        data = json.dumps(sorted(set(clean)))
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT INTO user_prefs (user_id, exchanges, updated_at)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(user_id) DO UPDATE SET
+                    exchanges=excluded.exchanges,
+                    updated_at=CURRENT_TIMESTAMP
+            ''', (user_id, data))
+            conn.commit()
+
+    def get_user_interval(self, user_id: int) -> int:
+        """Возвращает интервал обновления пользователя в минутах (1-60)."""
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT interval_minutes FROM user_prefs WHERE user_id = ?', (user_id,))
+            row = cursor.fetchone()
+            if not row or not row[0]:
+                return 5
+            try:
+                val = int(row[0])
+                return max(1, min(60, val))
+            except Exception:
+                return 5
+
+    def set_user_interval(self, user_id: int, minutes: int) -> None:
+        """Сохраняет интервал (минуты, 1-60) для пользователя."""
+        val = max(1, min(60, int(minutes)))
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT INTO user_prefs (user_id, interval_minutes, updated_at)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(user_id) DO UPDATE SET
+                    interval_minutes=excluded.interval_minutes,
+                    updated_at=CURRENT_TIMESTAMP
+            ''', (user_id, val))
+            conn.commit()
     
     def get_exchange_stats(self) -> Dict[str, Any]:
         """

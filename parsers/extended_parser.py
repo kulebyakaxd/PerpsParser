@@ -9,6 +9,7 @@ import aiohttp
 from typing import List, Dict, Any, Optional
 
 from database import DatabaseManager
+from utils.telegram_notifier import get_notifier
 
 
 class ExtendedParser:
@@ -59,13 +60,13 @@ class ExtendedParser:
                         self.db_manager.sync_exchange_snapshot("extended", valid_symbols)
                 except Exception:
                     pass
-                print(f"💾 Сохранено {saved} пар Extended в базу данных")
+                get_notifier().log(f"💾 Сохранено {saved} пар Extended в базу данных")
             else:
-                print("⚠️ Extended вернул пустой список рынков или цен")
+                get_notifier().log("⚠️ Extended вернул пустой список рынков или цен")
 
             return pairs
         except Exception as e:
-            print(f"❌ Ошибка Extended: {e}")
+            get_notifier().log(f"❌ Ошибка Extended: {e}")
             return []
 
     async def _fetch_markets(self) -> Any:
@@ -83,10 +84,10 @@ class ExtendedParser:
                 if resp.status == 200:
                     return await resp.json()
                 text = await resp.text()
-                print(f"Extended GET {url} -> {resp.status}: {text}")
+                get_notifier().log(f"Extended GET {url} -> {resp.status}: {text}")
                 return None
         except Exception as e:
-            print(f"Ошибка запроса {url}: {e}")
+            get_notifier().log(f"Ошибка запроса {url}: {e}")
             return None
 
     def _extract_symbol(self, data: Dict[str, Any]) -> Optional[str]:

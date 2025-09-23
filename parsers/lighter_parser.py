@@ -7,6 +7,7 @@ import aiohttp
 import requests
 from typing import List, Dict, Any
 from database import DatabaseManager
+from utils.telegram_notifier import get_notifier
 
 
 class LighterParser:
@@ -70,35 +71,35 @@ class LighterParser:
                     self.db_manager.sync_exchange_snapshot("lighter", valid_symbols)
                 except Exception:
                     pass
-                print(f"💾 Сохранено {saved_count} пар Lighter в базу данных")
+                get_notifier().log(f"💾 Сохранено {saved_count} пар Lighter в базу данных")
             
             return pairs
                 
         except Exception as e:
-            print(f"❌ Общая ошибка: {e}")
+            get_notifier().log(f"❌ Общая ошибка: {e}")
             return []
     
     async def _get_order_book_details(self) -> List[Dict[str, Any]]:
         """Получает детали ордербука со всеми рынками и ценами"""
         try:
             url = f"{self.base_url}/orderBookDetails"
-            print(f"Запрос к: {url}")
+            get_notifier().log(f"Запрос к: {url}")
             
             async with self.session.get(url) as response:
                 if response.status == 200:
                     data = await response.json()
                     if data.get('code') == 200:
                         order_book_details = data.get('order_book_details', [])
-                        print(f"✅ Получено {len(order_book_details)} рынков")
+                        get_notifier().log(f"✅ Получено {len(order_book_details)} рынков")
                         return order_book_details
                     else:
-                        print(f"❌ Ошибка API: {data.get('message', 'Unknown error')}")
+                        get_notifier().log(f"❌ Ошибка API: {data.get('message', 'Unknown error')}")
                         return []
                 else:
-                    print(f"❌ Ошибка {response.status} при получении данных")
+                    get_notifier().log(f"❌ Ошибка {response.status} при получении данных")
                     return []
         except Exception as e:
-            print(f"❌ Ошибка при получении данных: {e}")
+            get_notifier().log(f"❌ Ошибка при получении данных: {e}")
             return []
     
     def get_pairs_with_prices_sync(self) -> List[Dict[str, Any]]:
@@ -152,23 +153,23 @@ class LighterParser:
         """Синхронная версия получения деталей ордербука"""
         try:
             url = f"{self.base_url}/orderBookDetails"
-            print(f"Запрос к: {url}")
+            get_notifier().log(f"Запрос к: {url}")
             
             response = requests.get(url, timeout=10)
             if response.status_code == 200:
                 data = response.json()
                 if data.get('code') == 200:
                     order_book_details = data.get('order_book_details', [])
-                    print(f"✅ Получено {len(order_book_details)} рынков")
+                    get_notifier().log(f"✅ Получено {len(order_book_details)} рынков")
                     return order_book_details
                 else:
-                    print(f"❌ Ошибка API: {data.get('message', 'Unknown error')}")
+                    get_notifier().log(f"❌ Ошибка API: {data.get('message', 'Unknown error')}")
                     return []
             else:
-                print(f"❌ Ошибка {response.status_code} при получении данных")
+                get_notifier().log(f"❌ Ошибка {response.status_code} при получении данных")
                 return []
         except Exception as e:
-            print(f"❌ Ошибка при получении данных: {e}")
+            get_notifier().log(f"❌ Ошибка при получении данных: {e}")
             return []
 
 
@@ -177,15 +178,15 @@ async def main():
     parser = LighterParser()
     
     try:
-        print("Получение данных с Lighter...")
+        get_notifier().log("Получение данных с Lighter...")
         pairs = await parser.get_pairs_with_prices()
         
         if pairs:
-            print(f"Найдено {len(pairs)} торговых пар:")
+            get_notifier().log(f"Найдено {len(pairs)} торговых пар:")
             for i, pair in enumerate(pairs[:10], 1):  # Показываем первые 10 пар
-                print(f"{i:2d}. {pair['symbol']:20s} - ${pair['price']:>12.6f}")
+                get_notifier().log(f"{i:2d}. {pair['symbol']:20s} - ${pair['price']:>12.6f}")
         else:
-            print("Не удалось получить данные")
+            get_notifier().log("Не удалось получить данные")
         
         return pairs
         
