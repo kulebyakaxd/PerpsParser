@@ -2,6 +2,8 @@
 Основной файл для запуска парсера торговых пар
 """
 import asyncio
+import os
+import certifi
 
 # Загрузка переменных окружения из .env (если есть) ДО импортов парсеров,
 # чтобы настройки (например, ASTER_BASE_URL) применялись при импортировании модулей
@@ -10,6 +12,10 @@ try:
     load_dotenv()
 except Exception:
     pass
+
+# Ensure SSL verification uses certifi bundle (fixes SSL issues on macOS)
+os.environ.setdefault("SSL_CERT_FILE", certifi.where())
+os.environ.setdefault("REQUESTS_CA_BUNDLE", certifi.where())
 
 from parsers import HyperliquidParser, LighterParser, PacificaSDKParser, AsterParser, ExtendedParser
 from utils.telegram_notifier import get_notifier

@@ -78,6 +78,7 @@ class DatabaseManager:
                     user_id INTEGER PRIMARY KEY,
                     exchanges TEXT NOT NULL DEFAULT '[]',
                     interval_minutes INTEGER NOT NULL DEFAULT 5,
+                    top_limit INTEGER NOT NULL DEFAULT 10,
                     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
@@ -90,6 +91,9 @@ class DatabaseManager:
                 cols = [row[1] for row in cursor.fetchall()]  # row[1] = name
                 if 'interval_minutes' not in cols:
                     cursor.execute("ALTER TABLE user_prefs ADD COLUMN interval_minutes INTEGER NOT NULL DEFAULT 5")
+                    conn.commit()
+                if 'top_limit' not in cols:
+                    cursor.execute("ALTER TABLE user_prefs ADD COLUMN top_limit INTEGER NOT NULL DEFAULT 10")
                     conn.commit()
             except sqlite3.Error:
                 pass
@@ -351,22 +355,22 @@ class DatabaseManager:
             conn.commit()
 
     def get_user_interval(self, user_id: int) -> int:
-        """Возвращает интервал обновления пользователя в минутах (1-60)."""
+        """Возвращает интервал обновления пользователя в минутах. 0 = Off, 1–60 = minutes."""
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute('SELECT interval_minutes FROM user_prefs WHERE user_id = ?', (user_id,))
             row = cursor.fetchone()
-            if not row or not row[0]:
+            if not row:
                 return 5
             try:
                 val = int(row[0])
-                return max(1, min(60, val))
+                return max(0, min(60, val))
             except Exception:
                 return 5
 
     def set_user_interval(self, user_id: int, minutes: int) -> None:
-        """Сохраняет интервал (минуты, 1-60) для пользователя."""
-        val = max(1, min(60, int(minutes)))
+        """Сохраняет интервал (минуты). 0 = Off, 1–60 = minutes."""
+        val = max(0, min(60, int(minutes)))
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             cursor.execute('''
@@ -374,6 +378,34 @@ class DatabaseManager:
                 VALUES (?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(user_id) DO UPDATE SET
                     interval_minutes=excluded.interval_minutes,
+                    updated_at=CURRENT_TIMESTAMP
+            ''', (user_id, val))
+            conn.commit()
+
+    def get_user_top_limit(self, user_id: int) -> int:
+        """Возвращает число выводимых пар для пользователя. Допустимые: 5,10,15,20,30."""
+        allowed = {5, 10, 15, 20, 30}
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT top_limit FROM user_prefs WHERE user_id = ?', (user_id,))
+            row = cursor.fetchone()
+            try:
+                val = int(row[0]) if row else 10
+            except Exception:
+                val = 10
+            return val if val in allowed else 10
+
+    def set_user_top_limit(self, user_id: int, limit_value: int) -> None:
+        """Сохраняет число выводимых пар (5,10,15,20,30)."""
+        allowed = [5, 10, 15, 20, 30]
+        val = limit_value if limit_value in allowed else 10
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT INTO user_prefs (user_id, top_limit, updated_at)
+                VALUES (?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(user_id) DO UPDATE SET
+                    top_limit=excluded.top_limit,
                     updated_at=CURRENT_TIMESTAMP
             ''', (user_id, val))
             conn.commit()

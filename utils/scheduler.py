@@ -21,8 +21,10 @@ async def refresh_all_once() -> None:
                 close = getattr(parser, 'close', None)
                 if close and asyncio.iscoroutinefunction(close):
                     await close()
-            except Exception:
-                pass
+            except Exception as e:
+                # Surface parser-specific errors so we can detect issues (e.g., Pacifica auth)
+                from utils.telegram_notifier import get_notifier
+                get_notifier().log(f"❌ Error in parser '{name}': {e}")
         db.maintenance_snapshot(valid_exchanges=["hyperliquid", "lighter", "pacifica", "aster", "extended"])
         db.calculate_price_differences()
     finally:

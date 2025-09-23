@@ -11,6 +11,7 @@ import os
 import asyncio
 from typing import List
 import contextlib
+import html
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
 from telegram.constants import ParseMode
@@ -23,17 +24,70 @@ from utils.scheduler import periodic_refresh
 EXCHANGES_ALL = ["hyperliquid", "lighter", "pacifica", "aster", "extended"]
 
 
+def _load_exchange_links() -> dict:
+    """Loads exchange -> url template from links.txt at project root."""
+    try:
+        root_dir = os.path.dirname(os.path.dirname(__file__))  # up from utils/
+        path = os.path.join(root_dir, "links.txt")
+        mapping = {}
+        if not os.path.exists(path):
+            return mapping
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                # expected: "name - url"
+                if " - " not in line:
+                    continue
+                name, url = line.split(" - ", 1)
+                mapping[name.strip().lower()] = url.strip()
+        return mapping
+    except Exception:
+        return {}
+
+
+_EXCHANGE_LINKS = _load_exchange_links()
+
+
+def _exchange_url(exchange_key: str, symbol: str) -> str:
+    """Return link for exchange with symbol injected if template contains placeholder (ETH)."""
+    base = _EXCHANGE_LINKS.get(exchange_key.lower(), "")
+    if not base:
+        return ""
+    sym_up = str(symbol).upper()
+    # Replace common ETH placeholder forms
+    if "/ETH" in base:
+        return base.replace("/ETH", f"/{sym_up}")
+    if "symbol=ETH" in base:
+        return base.replace("symbol=ETH", f"symbol={sym_up}")
+    return base
+
+
 def _format_top_spreads(items: list) -> str:
     lines = ["📊 Top‑10 spreads"]
     for i, diff in enumerate(items, 1):
         pct = diff['percentage_difference']
-        symbol = diff['symbol']
-        ex1 = str(diff['exchange1']).capitalize()
-        ex2 = str(diff['exchange2']).capitalize()
+        symbol_raw = diff['symbol']
+        symbol = html.escape(str(symbol_raw))
+        ex1_key = str(diff['exchange1']).lower()
+        ex2_key = str(diff['exchange2']).lower()
+        ex1_label = ex1_key.capitalize()
+        ex2_label = ex2_key.capitalize()
         price1 = diff['price1']
         price2 = diff['price2']
+        url1 = _exchange_url(ex1_key, symbol_raw)
+        url2 = _exchange_url(ex2_key, symbol_raw)
+        if url1:
+            ex1_out = f"<a href=\"{html.escape(url1)}\">{html.escape(ex1_label)}</a>"
+        else:
+            ex1_out = html.escape(ex1_label)
+        if url2:
+            ex2_out = f"<a href=\"{html.escape(url2)}\">{html.escape(ex2_label)}</a>"
+        else:
+            ex2_out = html.escape(ex2_label)
         lines.append(
-            f"{i}. {symbol} — Δ {pct:.2f}% | {ex1} ${price1:.4f} • {ex2} ${price2:.4f}"
+            f"{i}. {symbol} — Δ {pct:.2f}% | {ex1_out} ${price1:.4f} • {ex2_out} ${price2:.4f}"
         )
     return "\n".join(lines)
 
@@ -51,14 +105,23 @@ def _keyboard(selected: List[str]) -> InlineKeyboardMarkup:
     for ex in EXCHANGES_ALL:
         flag = "✅" if ex in selected else "☑️"
         rows.append([InlineKeyboardButton(f"{flag} {ex.capitalize()}", callback_data=f"toggle:{ex}")])
-    # Interval row: 1, 5, 10, 15, 30, 60
+    # Interval row: Off, 1, 5, 10, 15, 30, 60
     rows.append([
+        InlineKeyboardButton("Off", callback_data="interval:0"),
         InlineKeyboardButton("1m", callback_data="interval:1"),
         InlineKeyboardButton("5m", callback_data="interval:5"),
         InlineKeyboardButton("10m", callback_data="interval:10"),
         InlineKeyboardButton("15m", callback_data="interval:15"),
         InlineKeyboardButton("30m", callback_data="interval:30"),
         InlineKeyboardButton("60m", callback_data="interval:60"),
+    ])
+    # Top limit row: 5,10,15,20,30
+    rows.append([
+        InlineKeyboardButton("5", callback_data="limit:5"),
+        InlineKeyboardButton("10", callback_data="limit:10"),
+        InlineKeyboardButton("15", callback_data="limit:15"),
+        InlineKeyboardButton("20", callback_data="limit:20"),
+        InlineKeyboardButton("30", callback_data="limit:30"),
     ])
     rows.append([InlineKeyboardButton("Show Top-10", callback_data="show")])
     return InlineKeyboardMarkup(rows)
@@ -93,8 +156,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 resize_keyboard=True,
             ),
         )
+    current_interval_label = "Off" if interval == 0 else f"{interval} min"
+    current_limit = db.get_user_top_limit(user_id)
     await update.message.reply_text(
-        f"Select at least 2 exchanges and interval (current: {interval} min):",
+        f"Select at least 2 exchanges and interval (current: {current_interval_label}). "
+        f"Top limit: {current_limit}",
         reply_markup=_keyboard(selected),
     )
 
@@ -123,11 +189,12 @@ async def top_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if len(exchanges) < 2:
         await update.message.reply_text("Please select at least 2 exchanges via /start.")
         return
-    items = db.get_top_differences_filtered(exchanges, limit=10)
+    limit_value = db.get_user_top_limit(user_id)
+    items = db.get_top_differences_filtered(exchanges, limit=limit_value)
     if not items:
         await update.message.reply_text("No data found. Please wait for the next refresh.")
         return
-    await update.message.reply_text(_format_top_spreads(items))
+    await update.message.reply_text(_format_top_spreads(items) + "\n\nmade by @xartmoves", parse_mode=ParseMode.HTML)
 
 
 async def settings_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -172,19 +239,29 @@ async def on_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         except Exception:
             minutes = 5
         db.set_user_interval(user_id, minutes)
-        await query.answer(f"Interval set to {minutes} min")
+        label = "Off" if minutes == 0 else f"{minutes} min"
+        await query.answer(f"Interval set to {label}")
+        return
+    if data.startswith("limit:"):
+        try:
+            lt = int(data.split(":", 1)[1])
+        except Exception:
+            lt = 10
+        db.set_user_top_limit(user_id, lt)
+        await query.answer(f"Top limit set to {lt}")
         return
     if data == "show":
         exchanges = db.get_user_exchanges(user_id)
         if len(exchanges) < 2:
             await query.answer("Select at least 2 exchanges.", show_alert=True)
             return
-        items = db.get_top_differences_filtered(exchanges, limit=10)
+        limit_value = db.get_user_top_limit(user_id)
+        items = db.get_top_differences_filtered(exchanges, limit=limit_value)
         if not items:
             await query.answer("No data yet. Please wait.", show_alert=True)
             return
         await query.answer()
-        await query.message.reply_text(_format_top_spreads(items))
+        await query.message.reply_text(_format_top_spreads(items) + "\n\nmade by @xartmoves", parse_mode=ParseMode.HTML)
 
 
 async def run_bot() -> None:
@@ -208,11 +285,12 @@ async def run_bot() -> None:
         exchanges = db.get_user_exchanges(user_id)
         if len(exchanges) < 2:
             return
-        items = db.get_top_differences_filtered(exchanges, limit=10)
+        limit_value = db.get_user_top_limit(user_id)
+        items = db.get_top_differences_filtered(exchanges, limit=limit_value)
         if not items:
             return
         try:
-            await context.bot.send_message(chat_id=user_id, text=_format_top_spreads(items))
+            await context.bot.send_message(chat_id=user_id, text=_format_top_spreads(items) + "\n\nmade by @xartmoves", parse_mode=ParseMode.HTML)
         except Exception:
             pass
 
@@ -227,7 +305,8 @@ async def run_bot() -> None:
         # Remove previous jobs
         for job in jq.get_jobs_by_name(str(user_id)):
             job.schedule_removal()
-        jq.run_repeating(push_top, interval=minutes * 60, chat_id=user_id, name=str(user_id))
+        if minutes and minutes > 0:
+            jq.run_repeating(push_top, interval=minutes * 60, chat_id=user_id, name=str(user_id))
 
     # Hook into /start and /settings to (re)schedule
     async def post_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
