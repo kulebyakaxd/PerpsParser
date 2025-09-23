@@ -2,21 +2,23 @@
 Основной файл для запуска парсера торговых пар
 """
 import asyncio
-from parsers import HyperliquidParser, LighterParser, PacificaSDKParser
-from database import DatabaseManager
 
-# Загрузка переменных окружения из .env (если есть)
+# Загрузка переменных окружения из .env (если есть) ДО импортов парсеров,
+# чтобы настройки (например, ASTER_BASE_URL) применялись при импортировании модулей
 try:
     from dotenv import load_dotenv  # type: ignore
     load_dotenv()
 except Exception:
     pass
 
+from parsers import HyperliquidParser, LighterParser, PacificaSDKParser, AsterParser
+from database import DatabaseManager
+
 
 async def main():
     """Основная функция для получения данных с различных бирж"""
     print("=== Парсер торговых пар ===")
-    print("Получает данные с Hyperliquid, Lighter и Pacifica")
+    print("Получает данные с Hyperliquid, Lighter, Pacifica и Aster")
     
     all_pairs = []
     
@@ -25,6 +27,7 @@ async def main():
         ("Hyperliquid", HyperliquidParser()),
         ("Lighter", LighterParser()),
         ("Pacifica (SDK)", PacificaSDKParser()),
+        ("Aster", AsterParser()),
     ]
     
     try:
@@ -55,7 +58,7 @@ async def main():
         
         # Обслуживание БД: оставляем один актуальный снэпшот на (symbol, exchange)
         db = DatabaseManager()
-        db.maintenance_snapshot(valid_exchanges=["hyperliquid", "lighter", "pacifica"])
+        db.maintenance_snapshot(valid_exchanges=["hyperliquid", "lighter", "pacifica", "aster"])
         
         # Общая статистика
         if all_pairs:
