@@ -65,7 +65,7 @@ def _exchange_url(exchange_key: str, symbol: str) -> str:
 
 
 def _format_top_spreads(items: list) -> str:
-    lines = ["📊 Top‑10 spreads"]
+    lines = [f"📊 Top‑{len(items)} spreads"]
     for i, diff in enumerate(items, 1):
         pct = diff['percentage_difference']
         symbol_raw = diff['symbol']
@@ -123,7 +123,7 @@ def _keyboard(selected: List[str]) -> InlineKeyboardMarkup:
         InlineKeyboardButton("20", callback_data="limit:20"),
         InlineKeyboardButton("30", callback_data="limit:30"),
     ])
-    rows.append([InlineKeyboardButton("Show Top-10", callback_data="show")])
+    rows.append([InlineKeyboardButton("Show Top", callback_data="show")])
     return InlineKeyboardMarkup(rows)
 
 
@@ -140,14 +140,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             "<b>Soft made by</b> <a href=\"https://t.me/xartmoves\">@xartmoves</a>\n\n"
             "👋 <b>Welcome!</b>\n\n"
             "This bot aggregates prices from Hyperliquid, Lighter, Pacifica, Aster and Extended\n"
-            "and shows the Top‑10 spreads (%).\n\n"
+            "and shows Top spreads (%).\n\n"
             "How to use:\n"
             "1) Open /start and select at least 2 exchanges;\n"
             "2) Choose update interval (1–60 minutes);\n"
-            "3) Tap \"Show Top-10\" or use /top.\n\n"
+            "3) Tap \"Show Top\" or use /top.\n\n"
             "Commands:\n"
             "• /start — configure exchanges and interval\n"
-            "• /top — show Top‑10 spreads\n"
+            "• /top — show Top spreads\n"
             "• /settings — open settings\n"
             "• /help — help",
             parse_mode=ParseMode.HTML,
@@ -170,10 +170,10 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(
             "<b>Soft made by</b> <a href=\"https://t.me/xartmoves\">@xartmoves</a>\n\n"
             "ℹ️ <b>Help</b>\n\n"
-            "This bot shows the Top‑10 spreads (%) among your selected exchanges.\n\n"
+            "This bot shows Top spreads (%) among your selected exchanges.\n\n"
             "Commands:\n"
             "• /start — configure exchanges and interval\n"
-            "• /top — show Top‑10 spreads\n"
+            "• /top — show Top spreads\n"
             "• /settings — open settings\n\n"
             "Tips: select at least 2 exchanges and an interval between 1–60 minutes.",
             parse_mode=ParseMode.HTML,
