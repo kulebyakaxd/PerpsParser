@@ -11,14 +11,14 @@ try:
 except Exception:
     pass
 
-from parsers import HyperliquidParser, LighterParser, PacificaSDKParser, AsterParser
+from parsers import HyperliquidParser, LighterParser, PacificaSDKParser, AsterParser, ExtendedParser
 from database import DatabaseManager
 
 
 async def main():
     """Основная функция для получения данных с различных бирж"""
     print("=== Парсер торговых пар ===")
-    print("Получает данные с Hyperliquid, Lighter, Pacifica и Aster")
+    print("Получает данные с Hyperliquid, Lighter, Pacifica, Aster и Extended")
     
     all_pairs = []
     
@@ -28,6 +28,7 @@ async def main():
         ("Lighter", LighterParser()),
         ("Pacifica (SDK)", PacificaSDKParser()),
         ("Aster", AsterParser()),
+        ("Extended", ExtendedParser()),
     ]
     
     try:
@@ -58,7 +59,7 @@ async def main():
         
         # Обслуживание БД: оставляем один актуальный снэпшот на (symbol, exchange)
         db = DatabaseManager()
-        db.maintenance_snapshot(valid_exchanges=["hyperliquid", "lighter", "pacifica", "aster"])
+        db.maintenance_snapshot(valid_exchanges=["hyperliquid", "lighter", "pacifica", "aster", "extended"])
         
         # Общая статистика
         if all_pairs:
