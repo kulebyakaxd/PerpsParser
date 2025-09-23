@@ -195,10 +195,14 @@ async def run_bot() -> None:
     async def schedule_for_user(user_id: int):
         db = DatabaseManager()
         minutes = db.get_user_interval(user_id)
+        # Guard: JobQueue may be None if extras not installed
+        jq = getattr(application, 'job_queue', None)
+        if jq is None:
+            return
         # Remove previous jobs
-        for job in application.job_queue.get_jobs_by_name(str(user_id)):
+        for job in jq.get_jobs_by_name(str(user_id)):
             job.schedule_removal()
-        application.job_queue.run_repeating(push_top, interval=minutes * 60, chat_id=user_id, name=str(user_id))
+        jq.run_repeating(push_top, interval=minutes * 60, chat_id=user_id, name=str(user_id))
 
     # Hook into /start and /settings to (re)schedule
     async def post_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
