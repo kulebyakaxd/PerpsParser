@@ -153,6 +153,7 @@ Thumbs.db
 data/
 logs/
 *.log
+план.txt
 
 # Configuration files with sensitive data
 config.py
